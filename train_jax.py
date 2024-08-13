@@ -42,6 +42,14 @@ import optimizer.online_learners as ol
 import optimizer.benchmark as benchmark
 import optimizer.scheduler as scheduler
 import optimizer.optim as optim
+from optimizer.ogd import ogd
+from optimizer.omd import omd, oomd, adaptive_oomd
+from optimizer.sgd import sgd
+from optimizer.zero import zero
+from optimizer.ftrl import ftrl
+from optimizer.oftrl import oftrl, adaptive_oftrl
+from optimizer.exponentiated_gradient import exponentiated_gradient
+
 
 sys.path.append('./minGPT')
 from mingpt.model import GPT as torch_GPT
@@ -69,9 +77,7 @@ class TrainState(NamedTuple):
     iteration: Array
     train_key: Array
     aux_state: Optional[AuxState]
-
-
-def load_lm_data(config: DictConfig, tokenizer: Any, split: str = "train"):
+def load_lm_data(config: DictConfig, tokenizer: Any, split: str = "train", use_hints=False):
     """Wrapper for Pile dataset. 
     config: global config.
 
@@ -102,7 +108,22 @@ def load_lm_data(config: DictConfig, tokenizer: Any, split: str = "train"):
             num_workers=config.dataloader_workers,
             dataset=config.name,
         )
-    return loader
+
+    # If use_cheat_hints is True, create another dataloader iterator for the second batch
+    second_loader = None
+    if use_hints:
+        second_loader = get_lm_loader_next_token(
+            tokenizer,
+            split=split,
+            batch_size=config.batch_size,
+            max_length=context_length,
+            shuffle_buffer_size=config.shuffle_buffer_size,
+            pad_to_multiple_of=context_length,
+            num_workers=config.dataloader_workers,
+            dataset=config.name,
+        )
+
+    return loader, second_loader
 
 
 def loss_fn(model: eqx.Module, batch: Tuple[Array, Array], key: Array):
@@ -268,12 +289,84 @@ def init_optimizer(
             beta=config.beta,
             weight_decay=config.weight_decay
         )
+    
+    def init_exponentiated_gradient(config: DictConfig, **kwargs):
+        learning_rate = wrap_scheduler(
+            init_scheduler(config.lr_config), logger=logger, **kwargs)
+        return exponentiated_gradient(
+            learning_rate=learning_rate
+        )
+    
+    def init_sgd(config, logger=None):
+        learning_rate = config.lr_config.lr
+        return sgd(learning_rate)
+    def init_omd(config, logger=None):
+        learning_rate = config.lr_config.lr
+        beta = config.beta
+        return omd(learning_rate, beta)
+    def init_oomd(config, logger=None):
+        learning_rate = config.lr_config.lr
+        beta = config.beta
+        return oomd(learning_rate, beta)
+    def init_aoomd(config, logger=None, **kwargs):
+        D = wrap_scheduler(
+            init_scheduler(config.D), logger=logger, **kwargs)
+        beta = config.beta
+        beta_2 = config.beta_2
+        return adaptive_oomd(D, beta, beta_2)
+    
+    def init_zero(config, logger=None):
+        learning_rate = config.lr_config.lr #doesnt matter
+        return zero(learning_rate)
+    
+    def init_ftrl(config, **kwargs):
+        learning_rate = wrap_scheduler(
+            init_scheduler(config.lr_config), logger=logger, **kwargs)
+        return ftrl(learning_rate, beta_1=config.beta1, beta_2=config.beta2)
+    
+    def init_oftrl(config, **kwargs):
+        learning_rate = wrap_scheduler(
+            init_scheduler(config.lr_config), logger=logger, **kwargs)
+        return oftrl(learning_rate, beta_1=config.beta1, beta_2=config.beta2, beta_3=config.beta3, hint_method=config.hint_method)
+        
+    def init_aoftrl(config, **kwargs):
+        learning_rate = wrap_scheduler(
+            init_scheduler(config.lr_config), logger=logger, **kwargs)
+        return adaptive_oftrl(learning_rate, beta_1=config.beta1, beta_2=config.beta2, beta_3=config.beta3, hint_method=config.hint_method, c=config.c, correlation=config.correlation)
+    
+    def init_ogd(cnfig: DictConfig,logger=None, **kwargs):
+        learning_rate = config.lr_config.lr
+
+        return ogd(learning_rate=learning_rate,
+                   beta=config.beta,
+                    )#weight_decay=config.weight_decay
+
 
     opt_config = config.optimizer
     if name == "adamw":
         optimizer = init_adamw(config=opt_config)
+    if name == "ftrl":
+        optimizer = init_ftrl(config=opt_config)
+    if name == "oftrl":
+        optimizer = init_oftrl(config=opt_config)
+    if name == "aoftrl":
+        optimizer = init_aoftrl(config=opt_config)
     elif name == "sgdm":
         optimizer = init_sgdm(config=opt_config)
+    elif name == "zero":
+        optimizer = init_zero(config=opt_config)
+    elif name == "sgd":
+        optimizer = init_sgd(config=opt_config)
+    elif name == "exponentiated_gradient":
+        optimizer = init_exponentiated_gradient(config=opt_config)
+    elif name == "ogd":
+        optimizer = init_ogd(config=opt_config)
+    elif name == "omd":
+        optimizer = init_omd(config=opt_config)
+    elif name == "oomd":
+        optimizer = init_oomd(config=opt_config)
+    elif name == "aoomd":
+        optimizer = init_aoomd(config=opt_config)
     elif name == "polar":
         optimizer = optim.polar_descent(
             direction_optim=init_adamw(config=opt_config.direction),
@@ -296,13 +389,14 @@ def init_optimizer(
         )
 
     # Wrap online to non-convex.
-    if name in ["ogd_md"]:
+    if name in ["ogd_md", "ogd", "ftrl", "omd", "oftrl", "aoftrl","exponentiated_gradient", "oomd", "aoomd"]:
         wrap_o2nc = True
     elif name in ["adamw", "sgdm", "polar", "jump"]:
         wrap_o2nc = False
     else:
         wrap_o2nc = config.train.wrap_o2nc
     if wrap_o2nc:
+        print("wrapped o2nc")
         optimizer = deterministic_online_nonconvex(optimizer)
 
     # Wrap random scaling.
@@ -312,7 +406,7 @@ def init_optimizer(
         seed=config.train.random_scaling_seed   # TODO: deprecate. use PRNGKey passed from argument instead of random seed.
     )
     
-    # Gradient clipping and finite gradient wrapper.
+    #Gradient clipping and finite gradient wrapper.
     grad_clip = optax.clip_by_global_norm(config.train.gradient_clip_val)
     optimizer = optax.chain(
         grad_clip,
@@ -462,11 +556,14 @@ def update_aux_state(
     )
 
 
+
+
 def train_step(
     train_state: TrainState,
     batch: Tuple[Array, Array],
-    optimizer: optax.GradientTransformation,
+    optimizer: optax.GradientTransformationExtraArgs,
     config: DictConfig,
+    second_batch: Optional[Tuple[Array, Array]] = None,
 ):
     # Apply auto mixed precision.
     if config.train.use_amp:
@@ -477,26 +574,68 @@ def train_step(
     else:
         value_and_grad_fn = eqx.filter_value_and_grad(loss_fn, has_aux=True)
 
-    model = train_state.model                                       # x_n
-    opt_state = train_state.opt_state                               # opt_state of x_n
+    model = train_state.model
+    opt_state = train_state.opt_state
     dynamic_scaler_state = train_state.dynamic_scaler_state
     key, new_key = jr.split(train_state.train_key)
 
-    # Apply one-step update: compute f(x_n, z_n) and g(x_n, z_n).
-    if config.train.use_amp:
-        dynamic_scaler_state, ((loss, logits), grads) = value_and_grad_fn(
-            model, batch, key=key, dynamic_scaler_state=dynamic_scaler_state
+    #if config.train.use_cheat_hints:
+    if config.train.use_cheat_hints:
+        # Save the initial states
+        initial_model = model
+        initial_opt_state = opt_state
+
+        # Get loss and grads
+        if config.train.use_amp:
+            dynamic_scaler_state, ((loss, logits), grads) = value_and_grad_fn(
+                model, batch, key=key, dynamic_scaler_state=dynamic_scaler_state
+            )
+        else:
+            (loss, logits), grads = value_and_grad_fn(model, batch, key=key)
+
+        # Perform the initial update
+        zero_hint = jtu.tree_map(lambda x: jnp.zeros_like(x), grads)
+        updates, opt_state = optimizer.update(
+            grads, opt_state, eqx.filter(model, eqx.is_array), hint=zero_hint
+        )
+        model = eqx.apply_updates(model, updates)
+
+        # Get the future gradients
+        if config.train.use_amp:
+            _, ((_, _), future_grads) = value_and_grad_fn(
+                model, second_batch, key=key, dynamic_scaler_state=dynamic_scaler_state
+            )
+        else:
+            (_, _), future_grads = value_and_grad_fn(model, second_batch, key=key)
+
+        # Restore the initial states
+        model = initial_model
+        opt_state = initial_opt_state
+
+        # Make the real update using the hint
+        updates, opt_state = optimizer.update(
+            grads, opt_state, eqx.filter(model, eqx.is_array), hint=future_grads
         )
     else:
-        (loss, logits), grads = value_and_grad_fn(model, batch, key=key)
-    updates, opt_state = optimizer.update(
-        grads, opt_state, eqx.filter(model, eqx.is_array)
-    )                                                               # s_(n+1) * Delta_(n+1) = x_(n+1) - x_n
-    new_model = eqx.apply_updates(model, updates)                   # x_(n+1)
+        # Get loss and grads
+        if config.train.use_amp:
+            dynamic_scaler_state, ((loss, logits), grads) = value_and_grad_fn(
+                model, batch, key=key, dynamic_scaler_state=dynamic_scaler_state
+            )
+        else:
+            (loss, logits), grads = value_and_grad_fn(model, batch, key=key)
 
-    # Update new train_state.
+        # Make the regular update
+        zero_hint = jtu.tree_map(lambda x: jnp.zeros_like(x), grads)
+        updates, opt_state = optimizer.update(
+            grads, opt_state, eqx.filter(model, eqx.is_array), hint=zero_hint
+        )
+
+    model = eqx.apply_updates(model, updates)
+
+    # Update train_state
     train_state = TrainState(
-        model=new_model,
+        model=model,
         opt_state=opt_state,
         dynamic_scaler_state=dynamic_scaler_state,
         iteration=train_state.iteration + 1,
@@ -504,19 +643,31 @@ def train_step(
         aux_state=train_state.aux_state,
     )
 
-    # Update aux_state and related loggings.
+    # Update aux_state and related loggings
     accuracy = get_accuracy(logits, batch)
     train_state = update_aux_state(
         train_state, updates, grads, batch, loss, config=config)
     log_data = train_state.aux_state.loggings
+
     return loss, accuracy, log_data, train_state
+
+
+
+def get_next_batch(dataloader):
+    try:
+        batch_data = next(dataloader)
+    except StopIteration:
+        dataloader = iter(dataloader)  # Restart iterator if exhausted
+        batch_data = next(dataloader)
+    return batch_data, dataloader
+
 
 
 
 def train_loop(
     train_state: TrainState,
     optimizer: optax.GradientTransformation,
-    dataloader: Any,
+    dataloader: Tuple[Any, Any],  # Accept as a tuple
     config: DictConfig,
     time_keeper: TimeKeeper,
     logger: RateLimitedWandbLog,
@@ -528,31 +679,39 @@ def train_loop(
     if do_save_checkpoint:
         if checkpoint_path is None:
             raise ValueError("checkpoint.save_path cannot be empty.")
-        # checkpoint_path = os.path.join(os.getcwd(), "saved_checkpoints", checkpoint_path)
         if not os.path.exists(checkpoint_path):
             raise ValueError(f"checkpoint path {checkpoint_path} does not exist.")
         if config.checkpoint.num_steps is not None:
             num_steps = config.checkpoint.num_steps
-    start_steps = train_state.iteration                 # 0 if not loading from checkpoint
+    start_steps = train_state.iteration  # 0 if not loading from checkpoint
     end_steps = start_steps + num_steps
-    dataloader = dataloader[start_steps:end_steps]      # get the subset for this checkpoint
-    pbar = tqdm.tqdm(enumerate(dataloader), total=num_steps)
+    dataloader, second_dataloader = dataloader  # Unpack the tuple
+
+    dataloader = iter(dataloader)
+    second_dataloader = iter(second_dataloader) if second_dataloader is not None else None
+
+    pbar = tqdm.tqdm(range(start_steps, end_steps), total=num_steps)
 
     running_loss, running_accuracy, total_tokens = 0, 0, 0
-    
+
     train_step_jit = eqx.filter_jit(
         jtu.Partial(train_step, config=config),
     )
-    
+
     # Initialize Wandb Logger
     beta = 1.0 - 1.0 / config.logging.running_stats_window
     iteration_timing_events = ["iteration", "dataloader", "train_step"]
     time_keeper.mark(start_events=["dataloader", "iteration", "tokens", "samples"])
 
-    for it, batch in pbar:
+    for it in pbar:
         if it >= num_steps:
             break
-        # Load training batch.
+
+        try:
+            batch = next(dataloader)
+        except StopIteration:
+            break
+
         # Manually shift labels for loadit dataset.
         if config.dataset.use_loadit:
             batch = shift_labels(batch)
@@ -560,14 +719,31 @@ def train_loop(
         labels = jnp.asarray(batch["labels"])
         tokens = jnp.sum(jnp.asarray(batch["attention_mask"]))
         samples = labels.shape[0]
+
+        # Conditionally extract the second batch if use_cheat_hints is True
+        second_batch = None
+        #if config.train.use_cheat_hints and second_dataloader is not None:
+        if second_dataloader is not None:
+            try:
+                second_batch_data = next(second_dataloader)
+                second_input_ids = jnp.asarray(second_batch_data["input_ids"])
+                second_labels = jnp.asarray(second_batch_data["labels"])
+                second_batch = (second_input_ids, second_labels)
+            except StopIteration:
+                second_dataloader = iter(second_dataloader)  # Restart iterator if exhausted
+                second_batch_data = next(second_dataloader)
+                second_input_ids = jnp.asarray(second_batch_data["input_ids"])
+                second_labels = jnp.asarray(second_batch_data["labels"])
+                second_batch = (second_input_ids, second_labels)
+
         time_keeper.mark(end_events={"dataloader": 1}, start_events=["train_step"])
 
         # Apply one-step train_step.
         loss, accuracy, log_data, train_state = train_step_jit(
-            train_state, (input_ids, labels), optimizer
+            train_state, (input_ids, labels), optimizer, second_batch=second_batch  # Add this argument
         )
         if jnp.isnan(loss):
-            break
+            raise ValueError("Loss is NaN. Stopping training.")
         time_keeper.mark(
             end_events={"train_step": 1},
         )
@@ -636,7 +812,7 @@ def train_loop(
 
 
 def train(config: DictConfig):
-    # Some san check of config.
+    # Some sanity check of config.
     
     # TODO: this is temporary
     seed = config.random_seed
@@ -645,17 +821,29 @@ def train(config: DictConfig):
     random.seed(seed)
 
     # Initialize Wandb logging.
-    if config.logging.wandb_project is not None:
+    if config.logging.wandb_project:
         limited_log = RateLimitedWandbLog(config.logging.wandb_logs_per_sec)
-        wandb.init(project=config.logging.wandb_project)
+        
+        wandb_init_args = {
+            "project": config.logging.wandb_project,
+            "name": config.logging.wandb_name,
+            "group": config.logging.wandb_group
+        }
+        
+        # Remove None values from the dict
+        wandb_init_args = {k: v for k, v in wandb_init_args.items() if v is not None}
+        
+        wandb.init(**wandb_init_args)
         wandb.config.update(OmegaConf.to_container(config))
     else:
         limited_log = None
 
+
     # Initialize dataloader for gpt2.
     tokenizer = init_tokenizer(config)
 
-    train_loader = load_lm_data(config, tokenizer)
+    # Change this line
+    train_loader, second_loader = load_lm_data(config, tokenizer, use_hints=config.train.use_cheat_hints)
 
     # Initialize random keys
     key = jr.PRNGKey(config.random_seed)
@@ -682,10 +870,11 @@ def train(config: DictConfig):
 
     time_keeper = TimeKeeper()
 
+    # Pass as a tuple
     train_loop(
         train_state,
         optimizer,
-        train_loader,
+        (train_loader, second_loader),
         config,
         logger=limited_log,
         time_keeper=time_keeper

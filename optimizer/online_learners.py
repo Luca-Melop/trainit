@@ -132,7 +132,7 @@ def scale_by_online_learner(
         return ScaleByOnlineLearnerState(
             Delta=Delta, opt_state=opt_state)
     
-    def update_fn(updates, state, params=None):
+    def update_fn(updates, state, params=None, hint=None):
         # Performs a one-step update of the online learner:
         #   Updates the params (Delta) and opt_state of the online learner.
         # 
@@ -149,7 +149,7 @@ def scale_by_online_learner(
                 linearize, updates, state.Delta)
         # Update Delta.
         Delta_updates, opt_state = state.ol_optimizer.update(
-            updates, state.opt_state, state.Delta)
+            updates, state.opt_state, state.Delta, hint)
         Delta = optax.apply_updates(state.Delta, Delta_updates)
         # Optional: project Delta into a constrained domain.
         if projection_norm:
@@ -193,9 +193,9 @@ def wrap_online_learner(
         return WrapOnlineLearnerState(
             params=params, state=state)
     
-    def update_fn(updates, state, params=None):
+    def update_fn(updates, state, params=None, hint=FileNotFoundError):
         del params
-        new_params, state = online_learner.update(updates, state.state, state.params)
+        new_params, state = online_learner.update(updates, state.state, state.params, hint)
         return new_params, WrapOnlineLearnerState(params=new_params, state=state)
 
     return OnlineLearner(init_fn, update_fn)
@@ -486,7 +486,7 @@ def kt_bettor(
     log = KTBettorLog()
 
     def init_fn(params):
-        sum_grad = jtu.tree_map(jnp.zeros_like, params)
+        sum_grad = jtu.tree_map(jnp.zeros_like, params) #initialize as zero
         wealth = jtu.tree_map(jnp.zeros_like, params)
         return KTBettorState(
             sum_grad=sum_grad,
@@ -500,7 +500,7 @@ def kt_bettor(
         # i.e., sn -> sn/G.
         updates = tree_scalar_multiply(updates, 1/G)
         count_inc = optax.safe_int32_increment(state.count)
-        sum_grad = tree_add(state.sum_grad, updates)
+        sum_grad = tree_add(state.sum_grad, updates) #elementwise addition (sums all updates)
         wealth = tree_subtract(state.wealth, tree_multiply(updates, params))
         new_params = jtu.tree_map(
             lambda St, Wt: - St / count_inc * (eps + Wt), sum_grad, wealth)

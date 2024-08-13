@@ -11,10 +11,20 @@ train:
   wrap_o2nc: False
 
   # random scaling options. supports "exponential".
-  random_scaling: null
+  random_scaling: exponential
   random_scaling_seed: 0  # to be deprecated. we should only use one global random seed and generate sub-keys by jr.split()
 
   # whether to use automatic mixed precision
   use_amp: True
   # value to cast to in mixed precision training.
   precision: float16
+ 
+
+  #used for testing wheter knowing g_t works
+  #if True it takes a step with hint zero and uses the gradients at that point for the update 
+  #at the previous point
+  use_cheat_hints: False
+  
+  accumulate_gradient: False
+
+  accumulation_steps: 32 #how many batches if accumulate_gradient is True | scale learning rate by the accumulation steps (tune again)

@@ -12,7 +12,14 @@ cd /projectnb/aclab/luca/trainit
 module load python3/3.10.12 cuda/12.2
 source env/bin/activate
 python check_env.py
-python train_jax.py logging.wandb_project=log1
+
+# test sgd optimizer
+python train_jax.py logging.wandb_project=log1 optimizer=sgd optimizer.lr_config.lr=1e-0
+python train_jax.py logging.wandb_project=log1 optimizer=sgd optimizer.lr_config.lr=1e-1
+python train_jax.py logging.wandb_project=log1 optimizer=sgd optimizer.lr_config.lr=3e-2
+python train_jax.py logging.wandb_project=log1 optimizer=sgd optimizer.lr_config.lr=1e-3
+python train_jax.py logging.wandb_project=log1 optimizer=sgd optimizer.lr_config.lr=1e-4
+
 
 # 2024/06/07
 # 1. with/out pytorch initialization

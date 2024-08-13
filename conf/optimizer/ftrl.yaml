@@ -1,0 +1,8 @@
+name: ftrl
+lr_config:
+  lr: 0.0003
+  schedule: linear
+  warmup: 5000  
+  max_steps: 50000
+beta1: 0.9
+beta2: 0.999

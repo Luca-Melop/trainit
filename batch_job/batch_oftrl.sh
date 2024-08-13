@@ -8,12 +8,18 @@
 
 ### Latest batch script updated on 2024/05/14.
 
-cd /projectnb/aclab/luca/trainit
+cd /projectnb/aclab/luca/trainit_test
 module load python3/3.10.12 cuda/12.2
 source env/bin/activate
 python check_env.py
-python train_jax.py logging.wandb_project=log1
 
+# test sgd optimizer
+#python train_jax.py logging.wandb_project=luca_hints optimizer=oftrl logging.wandb_name=oftrl_cheat train.use_cheat_hints=True train.use_amp=False optimizer.lr_config.lr=0.0002
+#python train_jax.py logging.wandb_project=luca_hints logging.wandb_name=adam optimizer.lr_config.lr=0.0002
+#python train_jax.py logging.wandb_project=luca_hints optimizer=oftrl train.use_cheat_hints=False train.use_amp=True logging.wandb_name=oftrl_cheat_32Batch optimizer.lr_config.lr=0.001 #optimizer.beta3=0.8 optimizer.hint_method=16
+python train_jax.py logging.wandb_project=log1 logging.wandb_name=hint3_oftrl optimizer=oftrl train.use_cheat_hints=False train.use_amp=False optimizer.lr_config.lr=0.0003 optimizer.beta3=0.9 optimizer.hint_method=3 #train.use_second_batch_cheat=False #optimizer.beta3=0.5  optimizer.hint_method=0
+
+#python train_jax.py logging.wandb_project=luca_hints logging.wandb_name=adam optimizer.weight_decay=0
 # 2024/06/07
 # 1. with/out pytorch initialization
 # python train_jax.py model.load_pytorch=True train.random_scaling=exponential

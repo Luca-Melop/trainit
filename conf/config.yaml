@@ -7,4 +7,4 @@ defaults:
   - checkpoint
   - experimental
 
-random_seed: 42   # this controls the entire randomness during training
+random_seed: 420   # this controls the entire randomness during training

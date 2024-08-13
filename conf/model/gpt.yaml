@@ -7,6 +7,14 @@ num_blocks: 12            # number of stacked transformer blocks.
 context_length: 1024      # maximum lenght of input tokens.
 rescale_residuals: False  # will not be used in new implementation.
 
+
+#dim: 256                 # scaled down embedding dimension of input tokens.
+#num_heads: 4             # scaled down number of heads in multi-head attention.
+#num_blocks: 4            # scaled down number of stacked transformer blocks.
+#context_length: 1024      # scaled down maximum length of input tokens.
+#rescale_residuals: False # will not be used in new implementation.
+
+
 # dropout probability of corresponding dropout layers
 attn_dropout: 0           
 attn_linear_dropout: 0

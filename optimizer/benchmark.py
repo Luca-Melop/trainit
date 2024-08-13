@@ -29,7 +29,7 @@ class AdamWState(NamedTuple):
 
 
 def adamw(
-    learning_rate: ScalarOrSchedule = 1e-4,
+    learning_rate: ScalarOrSchedule = 3e-4,
     beta1: float = 0.9,
     beta2: float = 0.999,
     eps: float = 1e-8,
@@ -51,7 +51,6 @@ def adamw(
     Returns:
         A `GradientTransformation` object.
     """
-
     use_pytree_wd = type(weight_decay) != float
 
     def init_fn(params):
@@ -64,7 +63,7 @@ def adamw(
             nu=jtu.tree_map(jnp.zeros_like, params)
         )
     
-    def update_fn(updates, state, params):
+    def update_fn(updates, state, params, hint):
         count_inc = optax.safe_int32_increment(state.count)
         mu = jtu.tree_map(
             lambda m, g: beta1*m + (1-beta1)*g, state.mu, updates)
@@ -84,12 +83,12 @@ def adamw(
         # Compute one-step update: -eta * [mu / (eps+sqrt(nu)) + lam * params]
         if not use_pytree_wd:
             new_updates = jtu.tree_map(
-                lambda m, v, p: -eta * (m/(eps+jnp.sqrt(v)) + weight_decay*p),
+                lambda m, v, p: -eta * (m/(eps+jnp.sqrt(v)) + 0*weight_decay*p),
                 mu_hat, nu_hat, params
             )
         else:
             new_updates = jtu.tree_map(
-                lambda m, v, p, wd: -eta * (m/(eps+jnp.sqrt(v)) + wd*p),
+                lambda m, v, p, wd: -eta * (m/(eps+jnp.sqrt(v)) + 0*wd*p),
                 mu_hat, nu_hat, params, weight_decay
             )
         return new_updates, AdamWState(
