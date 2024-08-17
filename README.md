@@ -42,6 +42,7 @@ python train_jax.py logging.wandb_project=<project-name> logging.wandb_name=8bat
 https://wandb.ai/optimizedlearning/log1/reports/Batch-size-8-Cheating-OFTRL-FTRL--Vmlldzo5MDYxMTY5
 ### Gradient Accumulation different Batch Size Cheating OFTRL
 ```bash
-python train_jax.py logging.wandb_project=log1 logging.wandb_name=4batch_cheat_oftrl optimizer=oftrl train.use_cheat_hints=True train.accumulate_gradients=True train.accumulation_steps=4 train.use_amp=False optimizer.lr_config.lr=0.0012``   
+python train_jax.py logging.wandb_project=log1 logging.wandb_name=4batch_cheat_oftrl optimizer=oftrl train.use_cheat_hints=True train.accumulate_gradients=True train.accumulation_steps=4 train.use_amp=False optimizer.lr_config.lr=0.0012
+```   
 
 https://wandb.ai/optimizedlearning/log1/reports/Different-batch-sizes-Cheating-OFTRL--Vmlldzo5MDYxMzc4
