@@ -1,123 +1,47 @@
 # LLM Training Pipeline
 
-### Table of Content
+This repo extends https://github.com/ZQZCalin/trainit. Instructions are available there.
 
-- [Installation](#installation)
-- [Usage](#usage)
-- [Advanced](#advanced)
+# New Functionality
+- implementation of various optimizers
+- cheating version for optimistic optimizers (POC)
+- implementation of various hint methods for optimistic optimizers
+- gradient accumulation
 
-## Installation
+# Results
 
-### First-time setup
-
+### Benchmark Adam & discounted-FTRL (Adam with O2NC Framework)
 ```bash
-git clone https://github.com/ZQZCalin/trainit.git
-cd trainit
-source scc_setup.sh
-```
-
-
-To setup wandb logging:
+python train_jax.py logging.wandb_project=<project-name> logging.wandb_name=<name> optimizer=ftrl
+```   
 ```bash
-wandb login
-```
+python train_jax.py logging.wandb_project=<project-name> logging.wandb_name=<name> #set weight decay to 0 for fair comparison
+```   
 
-We use [minGPT](https://github.com/karpathy/minGPT) to confirm pytorch/jax equivalence.
+https://wandb.ai/optimizedlearning/log1/reports/Benchmark-Adam-discounted-FTRL--Vmlldzo5MDU1NjUw
+### Hint Methods OFTRL
 ```bash
-git clone https://github.com/karpathy/minGPT.git
-```
-
-### Activate Environment
-
-Every time when you need to re-activate the environment:
-
+python train_jax.py logging.wandb_project=<project-name> logging.wandb_name=<name> optimizer=oftrl optimizer.beta3=0.5  optimizer.hint_method=0 #hint method between 0 and 20 (see optimizer/oftrl.py), beta3 is used for the hint calculations
+```  
+https://wandb.ai/optimizedlearning/log1/reports/Cheating-vs-Hints--Vmlldzo5MDUzODYx
+### Cheating POC (with two batches per iteration (2x gradient evaluations))
 ```bash
-cd /YOUR/PATH/trainit
-module load python3/3.10.12 cuda/12.2
-source env/bin/activate
-python check_env.py
-```
-
-## Usage
-
-### Run the Training Pipeline
-
-To reproduce the optimal benchmark:
-
+python train_jax.py logging.wandb_project=<project-name> logging.wandb_name=cheat_oftrl optimizer=oftrl train.use_cheat_hi
+```  
+https://wandb.ai/optimizedlearning/log1/reports/Cheating-OFTRL-POC-Adam--Vmlldzo5MDU1NzAz
+### Gradient Accumulation 8 Batches
 ```bash
-python train_jax.py logging.wandb_project=PROJECT_NAME
-```
+python train_jax.py logging.wandb_project=<project-name> logging.wandb_name=8batch_cheat_oftrl optimizer=oftrl train.use_cheat_hints=True train.accumulate_gradients=True train.accumulation_steps=8 train.use_amp=False optimizer.lr_config.lr=0.0024
+``` 
 
-This may fail if your GPU does not have enough memory (24GB should be enough). If you want to use a 12GB GPU like a V100, you can cut down the memory significantly by disabling some logging:
+  
 ```bash
-python train_jax.py logging.wandb_project=PROJECT_NAME logging.store_last_grads=false logging.store_past_grads=false logging.store_last_params=false logging.compute_last_
-loss=false logging.compute_last_grads=false
+python train_jax.py logging.wandb_project=<project-name> logging.wandb_name=8batch_ftrl optimizer=ftrl train.use_cheat_hints=False train.accumulate_gradients=True train.accumulation_steps=8 train.use_amp=False optimizer.lr_config.lr=0.0024
 ```
 
-You can also customize your own configurations. For example, if you want to train SGDM:
-
+https://wandb.ai/optimizedlearning/log1/reports/Batch-size-8-Cheating-OFTRL-FTRL--Vmlldzo5MDYxMTY5
+### Gradient Accumulation different Batch Size Cheating OFTRL
 ```bash
-python train_jax.py logging.wandb_project=PROJECT_NAME \
-    optimizer=sgdm optimizer.lr_config.lr=1.0 ...
-```
+python train_jax.py logging.wandb_project=log1 logging.wandb_name=4batch_cheat_oftrl optimizer=oftrl train.use_cheat_hints=True train.accumulate_gradients=True train.accumulation_steps=4 train.use_amp=False optimizer.lr_config.lr=0.0012``   
 
-
-See [later](#configurations) for details.
-
-### Checkpoint your Training
-
-We have implemented a checkpointing system for you. All you need is changing the checkpoint configuration:
-
-```bash
-python train_jax.py logging.wandb_project=PROJECT_NAME \
-    checkpoint.save=True checkpoint.save_path=CHECKPOINT_DIR checkpoint.save_steps=10000 \  # enable checkpoint saving
-    checkpoint.load=True checkpoint.load_path=CHECKPOINT_DIR/iter_10000.json \              # enable checkpoing loading
-    checkpoint.num_steps=null       # specify number of steps in one checkpoint (optional)
-```
-
-## Advanced
-
-### The Training Pipeline
-
-The main training pipeline `train_jax.py` is highly modulized, which consists of the following major components:
-
-- **Initialization**
-    - `load_lm_data`: initializes the dataloader;
-    - `init_tokenizer`: initializes the tokenizer;
-    - `init_model`: initializes the LLM model;
-    - `init_scheduler`: initializes learning rate scheduler;
-    - `init_optimizer`: initializes the optimizer
-- **Training Process**
-    - `train_step`: one-step training update;
-    - `update_aux_state`: optional training update to log training statistics.
-
-You can modify each component for your own needs.
-
-### Configurations
-
-We use [hydra](https://hydra.cc/docs/intro/) to manage the training configurations, stored in the `conf/` directory:
-```
-conf/
-|-- dataset/
-    |-- pile.yaml
-    |-- OTHER DATASETS
-|-- model/
-    |-- gpt.yaml
-    |-- OTHER MODELS
-|-- optimizer/
-    |-- adam.yaml
-    |-- sgdm.yaml
-    |-- OTHER OPTIMIZERS
-|-- config.yaml
-|-- train.yaml
-|-- logging.yaml
-|-- checkpoint.yaml
-|-- experimental.yaml
-```
-The current configuration is recorded from the optimal Adam benchmark. You can easily change configuration in command line as shown earlier.
-
-### Implement Your Own Optimizer
-
-1. Implement your optimizer in `optimizer/NAME.py`.
-2. Create a configuration file `conf/optimizer/NAME.yaml`.
-3. In the main pipeline `train_jax.py`, add your optimizer in the `init_optimizer` component.
+https://wandb.ai/optimizedlearning/log1/reports/Different-batch-sizes-Cheating-OFTRL--Vmlldzo5MDYxMzc4
