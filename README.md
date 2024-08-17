@@ -3,8 +3,8 @@
 This repo extends https://github.com/ZQZCalin/trainit. Instructions are available there.
 
 # New Functionality
-- implementation of various optimizers
-- cheating version for optimistic optimizers (POC)
+- implementation of more optimizers
+- cheating version for optimistic optimizers --> OFTRL (POC)
 - implementation of various hint methods for optimistic optimizers
 - gradient accumulation
 
