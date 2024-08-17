@@ -48,7 +48,7 @@ def ftrl(
             logging=logger()
         )
 
-    def update_fn(updates, state, params):
+    def update_fn(updates, state, params, hint):
         if callable(lr):
             eta = lr(state.count)
         else:

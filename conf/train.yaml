@@ -25,6 +25,6 @@ train:
   #at the previous point
   use_cheat_hints: False
   
-  accumulate_gradient: False
+  accumulate_gradients: False
 
   accumulation_steps: 32 #how many batches if accumulate_gradient is True | scale learning rate by the accumulation steps (tune again)

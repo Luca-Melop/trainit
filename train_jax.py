@@ -1,3 +1,4 @@
+
 # Train gpt2 model on c4 dataset.
 # 
 # We will fix our model and dataset and test the 
@@ -51,8 +52,8 @@ from optimizer.oftrl import oftrl, adaptive_oftrl
 from optimizer.exponentiated_gradient import exponentiated_gradient
 
 
-sys.path.append('./minGPT')
-from mingpt.model import GPT as torch_GPT
+#sys.path.append('./minGPT')
+#from mingpt.model import GPT as torch_GPT
 
 import random
 import numpy as np
@@ -152,12 +153,12 @@ def loss_fn(model: eqx.Module, batch: Tuple[Array, Array], key: Array):
 
 
 def init_tokenizer(config: DictConfig, pad_token: bool = True):
-    """Initializes tokenizer. If `pad_token` is true, adds pad_token as a special token. Defaults to true."""
+    """Initializes tokenizer. If pad_token is true, adds pad_token as a special token. Defaults to true."""
     model_name = config.model.name
     if model_name == "gpt":
         tokenizer = transformers.GPT2TokenizerFast.from_pretrained("gpt2")
         if pad_token:
-            tokenizer.add_special_tokens({"pad_token": "<|pad|>"})
+            tokenizer.add_special_tokens({"pad_token": ""})
     else:
         raise ValueError(f"model {model_name} is not supported.")
     return tokenizer
@@ -179,16 +180,16 @@ def init_model(vocab_size: int, config: DictConfig, *, key: PRNGKeyArray) -> eqx
         model = GPT(vocab_size, config, state_dict=torch_model.state_dict())
     return model
 
-
-def init_scheduler(lr_config: DictConfig, **kwargs) -> optax.ScalarOrSchedule:
+def init_scheduler(lr_config: DictConfig, accumulation_steps: int = 1, **kwargs) -> optax.ScalarOrSchedule:
     """Parses the config and initializes a learning rate scheduler.
 
     Args:
         lr_config: The learning rate config.
-        kargs: Additional arguments to overwrite learning rate config.
+        accumulation_steps: The number of gradient accumulation steps.
+        kwargs: Additional arguments to overwrite learning rate config.
 
     Returns:
-        A `optax.ScalarOrSchedule` object.
+        A optax.ScalarOrSchedule object.
     """
     # Overwrites default config.
     config = {
@@ -201,37 +202,41 @@ def init_scheduler(lr_config: DictConfig, **kwargs) -> optax.ScalarOrSchedule:
     config.update(kwargs)
     config = OmegaConf.create(config)
 
-    use_warmup = type(config.warmup)==int and (config.warmup > 0)
+    # Adjust max_steps and warmup based on accumulation_steps
+    adjusted_max_steps = config.max_steps // accumulation_steps
+    adjusted_warmup = config.warmup // accumulation_steps if config.warmup > 0 else 0
+
     if config.schedule == "constant":
         learning_rate = config.lr
     elif config.schedule == "cosine":
-        if use_warmup:
+        if adjusted_warmup > 0:
             learning_rate = optax.warmup_cosine_decay_schedule(
                 init_value=0.0,
                 peak_value=config.lr,
-                warmup_steps=config.warmup,
-                decay_steps=config.max_steps,
+                warmup_steps=adjusted_warmup,
+                decay_steps=adjusted_max_steps,
             )
         else:
             learning_rate = optax.cosine_decay_schedule(
                 init_value=config.lr,
-                decay_steps=config.max_steps,
+                decay_steps=adjusted_max_steps,
             )
     elif config.schedule == "linear":
-        if use_warmup:
+        if adjusted_warmup > 0:
             learning_rate = scheduler.warmup_linear_decay_schedule(
                 init_value=0.0,
                 peak_value=config.lr,
-                warmup_steps=config.warmup,
-                decay_steps=config.max_steps,
+                warmup_steps=adjusted_warmup,
+                decay_steps=adjusted_max_steps,
             )
         else:
             learning_rate = scheduler.linear_decay_schedule(
                 init_value=config.lr,
-                decay_steps=config.max_steps,
+                decay_steps=adjusted_max_steps,
             )
     else:
         raise ValueError(f"schedule type {config.schedule} is not supported.")
+    
     return learning_rate
 
 
@@ -267,6 +272,9 @@ def init_optimizer(
     # Initialize base optimizer / online learner.
     name = config.optimizer.name
     max_steps = config.train.max_steps
+
+    accumulation_steps = config.train.accumulation_steps if config.train.accumulate_gradients else 1 #for schedular that max steps get divided by accumualtion steps
+
 
     def init_adamw(config: DictConfig, **kwargs):
         """use kwargs to pass down optional arguments (e.g., schedule_title)"""
@@ -321,17 +329,17 @@ def init_optimizer(
     
     def init_ftrl(config, **kwargs):
         learning_rate = wrap_scheduler(
-            init_scheduler(config.lr_config), logger=logger, **kwargs)
-        return ftrl(learning_rate, beta_1=config.beta1, beta_2=config.beta2)
+            init_scheduler(config.lr_config, accumulation_steps=accumulation_steps), logger=logger, **kwargs)
+        return ftrl(learning_rate)
     
     def init_oftrl(config, **kwargs):
         learning_rate = wrap_scheduler(
-            init_scheduler(config.lr_config), logger=logger, **kwargs)
+            init_scheduler(config.lr_config, accumulation_steps=accumulation_steps), logger=logger, **kwargs)
         return oftrl(learning_rate, beta_1=config.beta1, beta_2=config.beta2, beta_3=config.beta3, hint_method=config.hint_method)
         
     def init_aoftrl(config, **kwargs):
         learning_rate = wrap_scheduler(
-            init_scheduler(config.lr_config), logger=logger, **kwargs)
+            init_scheduler(config.lr_config, accumulation_steps=accumulation_steps), logger=logger, **kwargs)
         return adaptive_oftrl(learning_rate, beta_1=config.beta1, beta_2=config.beta2, beta_3=config.beta3, hint_method=config.hint_method, c=config.c, correlation=config.correlation)
     
     def init_ogd(cnfig: DictConfig,logger=None, **kwargs):
@@ -345,11 +353,11 @@ def init_optimizer(
     opt_config = config.optimizer
     if name == "adamw":
         optimizer = init_adamw(config=opt_config)
-    if name == "ftrl":
+    elif name == "ftrl":
         optimizer = init_ftrl(config=opt_config)
-    if name == "oftrl":
+    elif name == "oftrl":
         optimizer = init_oftrl(config=opt_config)
-    if name == "aoftrl":
+    elif name == "aoftrl":
         optimizer = init_aoftrl(config=opt_config)
     elif name == "sgdm":
         optimizer = init_sgdm(config=opt_config)
@@ -555,17 +563,16 @@ def update_aux_state(
         aux_state = aux_state
     )
 
-
-
-
 def train_step(
     train_state: TrainState,
     batch: Tuple[Array, Array],
     optimizer: optax.GradientTransformationExtraArgs,
     config: DictConfig,
+    accumulate: bool = False,
     second_batch: Optional[Tuple[Array, Array]] = None,
+    cumulative_grads: Optional[Any] = None
 ):
-    # Apply auto mixed precision.
+    # Apply auto mixed precision if enabled
     if config.train.use_amp:
         amp_loss_fn = amp(loss_fn, compute_dtype=get_dtype(config.train.precision))
         value_and_grad_fn = dynamic_scale_value_and_grad(
@@ -579,13 +586,12 @@ def train_step(
     dynamic_scaler_state = train_state.dynamic_scaler_state
     key, new_key = jr.split(train_state.train_key)
 
-    #if config.train.use_cheat_hints:
-    if config.train.use_cheat_hints:
-        # Save the initial states
+    if config.train.use_cheat_hints and second_batch is not None:
+        # Save initial states for cheating version
         initial_model = model
         initial_opt_state = opt_state
 
-        # Get loss and grads
+        # Compute initial loss and grads
         if config.train.use_amp:
             dynamic_scaler_state, ((loss, logits), grads) = value_and_grad_fn(
                 model, batch, key=key, dynamic_scaler_state=dynamic_scaler_state
@@ -593,14 +599,14 @@ def train_step(
         else:
             (loss, logits), grads = value_and_grad_fn(model, batch, key=key)
 
-        # Perform the initial update
+        # Perform the initial update to get future grads
         zero_hint = jtu.tree_map(lambda x: jnp.zeros_like(x), grads)
         updates, opt_state = optimizer.update(
             grads, opt_state, eqx.filter(model, eqx.is_array), hint=zero_hint
         )
         model = eqx.apply_updates(model, updates)
 
-        # Get the future gradients
+        # Compute future grads
         if config.train.use_amp:
             _, ((_, _), future_grads) = value_and_grad_fn(
                 model, second_batch, key=key, dynamic_scaler_state=dynamic_scaler_state
@@ -608,16 +614,34 @@ def train_step(
         else:
             (_, _), future_grads = value_and_grad_fn(model, second_batch, key=key)
 
-        # Restore the initial states
+        # Restore initial states
         model = initial_model
         opt_state = initial_opt_state
 
-        # Make the real update using the hint
-        updates, opt_state = optimizer.update(
-            grads, opt_state, eqx.filter(model, eqx.is_array), hint=future_grads
-        )
+        # Combine current grads and future grads
+        # combined_grads = jtu.tree_map(lambda x, y: x + y, grads, future_grads)
+
+        if accumulate:
+            # Accumulate combined gradients
+            if cumulative_grads is None:
+                cumulative_grads = grads
+            else:
+                cumulative_grads = jtu.tree_map(lambda x, y: x + y, cumulative_grads, grads)
+            
+            # Logging for debugging
+            print(f"Accumulating gradients with cheating. Current batch loss: {loss}")
+            
+            return loss, logits, cumulative_grads, train_state
+        else:
+            # Final update with accumulated gradients
+            if config.train.accumulate_gradients:
+                grads = jtu.tree_map(lambda x: x / config.train.accumulation_steps, cumulative_grads)
+
+            updates, opt_state = optimizer.update(
+                grads, opt_state, eqx.filter(model, eqx.is_array), hint=future_grads
+            )
     else:
-        # Get loss and grads
+        # Compute loss and grads
         if config.train.use_amp:
             dynamic_scaler_state, ((loss, logits), grads) = value_and_grad_fn(
                 model, batch, key=key, dynamic_scaler_state=dynamic_scaler_state
@@ -625,11 +649,26 @@ def train_step(
         else:
             (loss, logits), grads = value_and_grad_fn(model, batch, key=key)
 
-        # Make the regular update
-        zero_hint = jtu.tree_map(lambda x: jnp.zeros_like(x), grads)
-        updates, opt_state = optimizer.update(
-            grads, opt_state, eqx.filter(model, eqx.is_array), hint=zero_hint
-        )
+        if accumulate:
+            # Accumulate gradients
+            if cumulative_grads is None:
+                cumulative_grads = grads
+            else:
+                cumulative_grads = jtu.tree_map(lambda x, y: x + y, cumulative_grads, grads)
+            
+            # Logging for debugging
+            print(f"Accumulating gradients. Current batch loss: {loss}")
+
+            return loss, logits, cumulative_grads, train_state
+        else:
+            # Final update with or without accumulated gradients
+            if config.train.accumulate_gradients:
+                grads = jtu.tree_map(lambda x: x / config.train.accumulation_steps, grads)
+
+            zero_hint = jtu.tree_map(lambda x: jnp.zeros_like(x), grads)
+            updates, opt_state = optimizer.update(
+                grads, opt_state, eqx.filter(model, eqx.is_array), hint=zero_hint
+            )
 
     model = eqx.apply_updates(model, updates)
 
@@ -652,7 +691,6 @@ def train_step(
     return loss, accuracy, log_data, train_state
 
 
-
 def get_next_batch(dataloader):
     try:
         batch_data = next(dataloader)
@@ -661,18 +699,14 @@ def get_next_batch(dataloader):
         batch_data = next(dataloader)
     return batch_data, dataloader
 
-
-
-
 def train_loop(
     train_state: TrainState,
     optimizer: optax.GradientTransformation,
-    dataloader: Tuple[Any, Any],  # Accept as a tuple
+    dataloader: Tuple[Any, Any],
     config: DictConfig,
     time_keeper: TimeKeeper,
     logger: RateLimitedWandbLog,
 ) -> TrainState:
-    # Handling restarting from checkpoints.
     do_save_checkpoint = config.checkpoint.save
     checkpoint_path = config.checkpoint.save_path
     num_steps = config.train.max_steps
@@ -683,36 +717,37 @@ def train_loop(
             raise ValueError(f"checkpoint path {checkpoint_path} does not exist.")
         if config.checkpoint.num_steps is not None:
             num_steps = config.checkpoint.num_steps
-    start_steps = train_state.iteration  # 0 if not loading from checkpoint
+    start_steps = train_state.iteration
     end_steps = start_steps + num_steps
-    dataloader, second_dataloader = dataloader  # Unpack the tuple
+    dataloader, second_dataloader = dataloader
 
     dataloader = iter(dataloader)
     second_dataloader = iter(second_dataloader) if second_dataloader is not None else None
 
     pbar = tqdm.tqdm(range(start_steps, end_steps), total=num_steps)
 
-    running_loss, running_accuracy, total_tokens = 0, 0, 0
+    running_loss, total_tokens = 0, 0
+    running_accuracy = 0
 
     train_step_jit = eqx.filter_jit(
         jtu.Partial(train_step, config=config),
     )
 
-    # Initialize Wandb Logger
     beta = 1.0 - 1.0 / config.logging.running_stats_window
     iteration_timing_events = ["iteration", "dataloader", "train_step"]
     time_keeper.mark(start_events=["dataloader", "iteration", "tokens", "samples"])
+
+    accumulate_gradients = config.train.accumulate_gradients
+    accumulation_steps = config.train.accumulation_steps
+    cumulative_grads = None
+    accumulation_counter = 0
 
     for it in pbar:
         if it >= num_steps:
             break
 
-        try:
-            batch = next(dataloader)
-        except StopIteration:
-            break
+        batch, dataloader = get_next_batch(dataloader)
 
-        # Manually shift labels for loadit dataset.
         if config.dataset.use_loadit:
             batch = shift_labels(batch)
         input_ids = jnp.asarray(batch["input_ids"])
@@ -720,93 +755,149 @@ def train_loop(
         tokens = jnp.sum(jnp.asarray(batch["attention_mask"]))
         samples = labels.shape[0]
 
-        # Conditionally extract the second batch if use_cheat_hints is True
         second_batch = None
-        #if config.train.use_cheat_hints and second_dataloader is not None:
-        if second_dataloader is not None:
-            try:
-                second_batch_data = next(second_dataloader)
-                second_input_ids = jnp.asarray(second_batch_data["input_ids"])
-                second_labels = jnp.asarray(second_batch_data["labels"])
-                second_batch = (second_input_ids, second_labels)
-            except StopIteration:
-                second_dataloader = iter(second_dataloader)  # Restart iterator if exhausted
-                second_batch_data = next(second_dataloader)
-                second_input_ids = jnp.asarray(second_batch_data["input_ids"])
-                second_labels = jnp.asarray(second_batch_data["labels"])
-                second_batch = (second_input_ids, second_labels)
+        if config.train.use_cheat_hints and second_dataloader is not None:
+            second_batch_data, second_dataloader = get_next_batch(second_dataloader)
+            second_input_ids = jnp.asarray(second_batch_data["input_ids"])
+            second_labels = jnp.asarray(second_batch_data["labels"])
+            second_batch = (second_input_ids, second_labels)
 
         time_keeper.mark(end_events={"dataloader": 1}, start_events=["train_step"])
 
-        # Apply one-step train_step.
-        loss, accuracy, log_data, train_state = train_step_jit(
-            train_state, (input_ids, labels), optimizer, second_batch=second_batch  # Add this argument
-        )
-        if jnp.isnan(loss):
-            raise ValueError("Loss is NaN. Stopping training.")
-        time_keeper.mark(
-            end_events={"train_step": 1},
-        )
+        if accumulate_gradients:
+            loss, logits, cumulative_grads, train_state = train_step_jit(
+                train_state, (input_ids, labels), optimizer, accumulate=True, second_batch=second_batch, cumulative_grads=cumulative_grads
+            )
+            accumulation_counter += 1
+            if accumulation_counter % accumulation_steps == 0:
+                print(f"Accumulation step {accumulation_counter}: Performing model update")
+                loss, accuracy, log_data, train_state = train_step_jit(
+                    train_state, (input_ids, labels), optimizer, accumulate=False, second_batch=second_batch, cumulative_grads=cumulative_grads
+                )
+                cumulative_grads = None
+                accumulation_counter = 0
 
-        # Update loss and accuracy.
-        running_loss = beta * running_loss + (1.0 - beta) * loss
-        total_tokens += tokens
-        running_accuracy = beta * running_accuracy + (1 - beta) * accuracy
-        pbar.set_description(
-            f"train iter: {it}, tokens: {total_tokens}, loss: {loss:.2f}, accuracy: {accuracy:.4f}, running_loss: {running_loss/(1.0-beta**(it+1)):.2f}, running_accuracy: {running_accuracy/(1.0-beta**(it+1)):.4f}"
-        )
+                # Perform logging and update
+                if jnp.isnan(loss):
+                    warnings.warn("Loss is NaN. Continuing training.", UserWarning)
 
-        # ======================================================================
-        # BELOW UPDATES ADDITIONAL LOG MESSAGES...
-        # Basic states.
-        metrics = {
-            "iterations": train_state.iteration,
-            "loss": loss,
-            "total_tokens": total_tokens,
-            "accuracy": accuracy,
-        }
-        metrics.update(log_data)
+                time_keeper.mark(end_events={"train_step": 1})
 
-        # Time complexity related statistics.
-        time_keeper.mark(
-            start_events=["dataloader", "iteration", "tokens", "samples"],
-            end_events={"iteration": 1, "tokens": tokens, "samples": samples},
-        )
-        durations = time_keeper.get_durations()
-        proportions = time_keeper.get_proportions()
-        metrics.update(
-            {
-                f"time/secs_per/{k}": durations[k]
-                for k in iteration_timing_events
-                if k in durations
-            }
-        )
-        metrics.update(
-            {
-                f"time/fraction_spent/{k}": proportions[k]
-                for k in iteration_timing_events
-                if k in proportions
-            }
-        )
+                running_loss = beta * running_loss + (1.0 - beta) * loss
+                total_tokens += tokens
+                running_accuracy = beta * running_accuracy + (1 - beta) * accuracy
+                pbar.set_description(
+                    f"train iter: {it}, tokens: {total_tokens}, loss: {loss:.2f}, accuracy: {accuracy:.4f}, running_loss: {running_loss/(1.0-beta**(it+1)):.2f}, running_accuracy: {running_accuracy/(1.0-beta**(it+1)):.4f}"
+                )
 
-        if "iteration" in durations:
-            throughput = {
-                "throughput/iteration_per_sec": 1.0 / durations["iteration"],
-                "throughput/samples_per_sec": 1.0 / durations["samples"],
-                "throughput/tokens_per_sec": 1.0 / durations["tokens"],
-            }
-            metrics.update(throughput)
+                metrics = {
+                    "iterations": train_state.iteration,
+                    "loss": loss,
+                    "total_tokens": total_tokens,
+                    "accuracy": accuracy,
+                }
+                metrics.update(log_data)
 
-        if config.logging.wandb_project is not None:
-            logger(
-                metrics,
-                step=train_state.iteration,
+                time_keeper.mark(
+                    start_events=["dataloader", "iteration", "tokens", "samples"],
+                    end_events={"iteration": 1, "tokens": tokens, "samples": samples},
+                )
+                durations = time_keeper.get_durations()
+                proportions = time_keeper.get_proportions()
+                metrics.update(
+                    {
+                        f"time/secs_per/{k}": durations[k]
+                        for k in iteration_timing_events
+                        if k in durations
+                    }
+                )
+                metrics.update(
+                    {
+                        f"time/fraction_spent/{k}": proportions[k]
+                        for k in iteration_timing_events
+                        if k in proportions
+                    }
+                )
+
+                if "iteration" in durations:
+                    throughput = {
+                        "throughput/iteration_per_sec": 1.0 / durations["iteration"],
+                        "throughput/samples_per_sec": 1.0 / durations["samples"],
+                        "throughput/tokens_per_sec": 1.0 / durations["tokens"],
+                    }
+                    metrics.update(throughput)
+
+                if config.logging.wandb_project is not None:
+                    logger(
+                        metrics,
+                        step=train_state.iteration,
+                    )
+
+                if do_save_checkpoint and train_state.iteration % config.checkpoint.save_steps == 0:
+                    serializer.save(os.path.join(checkpoint_path, f"iter_{train_state.iteration}.ckpt"), train_state)
+        else:
+            loss, accuracy, log_data, train_state = train_step_jit(
+                train_state, (input_ids, labels), optimizer, accumulate=False, second_batch=second_batch
             )
 
-        # ======================================================================
-        # Saving Checkpoint.
-        if do_save_checkpoint and train_state.iteration % config.checkpoint.save_steps == 0:
-            serializer.save(os.path.join(checkpoint_path, f"iter_{train_state.iteration}.ckpt"), train_state)
+            # Perform logging and update
+            if jnp.isnan(loss):
+                warnings.warn("Loss is NaN. Continuing training.", UserWarning)
+
+            time_keeper.mark(end_events={"train_step": 1})
+
+            running_loss = beta * running_loss + (1.0 - beta) * loss
+            total_tokens += tokens
+            running_accuracy = beta * running_accuracy + (1 - beta) * accuracy
+            pbar.set_description(
+                f"train iter: {it}, tokens: {total_tokens}, loss: {loss:.2f}, accuracy: {accuracy:.4f}, running_loss: {running_loss/(1.0-beta**(it+1)):.2f}, running_accuracy: {running_accuracy/(1.0-beta**(it+1)):.4f}"
+            )
+
+            metrics = {
+                "iterations": train_state.iteration,
+                "loss": loss,
+                "total_tokens": total_tokens,
+                "accuracy": accuracy,
+            }
+            metrics.update(log_data)
+
+            time_keeper.mark(
+                start_events=["dataloader", "iteration", "tokens", "samples"],
+                end_events={"iteration": 1, "tokens": tokens, "samples": samples},
+            )
+            durations = time_keeper.get_durations()
+            proportions = time_keeper.get_proportions()
+            metrics.update(
+                {
+                    f"time/secs_per/{k}": durations[k]
+                    for k in iteration_timing_events
+                    if k in durations
+                }
+            )
+            metrics.update(
+                {
+                    f"time/fraction_spent/{k}": proportions[k]
+                    for k in iteration_timing_events
+                    if k in proportions
+                }
+            )
+
+            if "iteration" in durations:
+                throughput = {
+                    "throughput/iteration_per_sec": 1.0 / durations["iteration"],
+                    "throughput/samples_per_sec": 1.0 / durations["samples"],
+                    "throughput/tokens_per_sec": 1.0 / durations["tokens"],
+                }
+                metrics.update(throughput)
+
+            if config.logging.wandb_project is not None:
+                logger(
+                    metrics,
+                    step=train_state.iteration,
+                )
+
+            if do_save_checkpoint and train_state.iteration % config.checkpoint.save_steps == 0:
+                serializer.save(os.path.join(checkpoint_path, f"iter_{train_state.iteration}.ckpt"), train_state)
 
     return train_state
 
