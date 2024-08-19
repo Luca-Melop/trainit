@@ -13,7 +13,7 @@ module load python3/3.10.12 cuda/12.2
 source env/bin/activate
 python check_env.py
 
-# test sgd optimizer
+# test omd optimizer
 #python train_jax.py logging.wandb_project=log1 logging.wandb_name=oomd_exp optimizer=oomd optimizer.lr_config.lr=1e-2 train.random_scaling=exponential
 #python train_jax.py logging.wandb_project=log1 logging.wandb_name=oomd_exp optimizer=oomd optimizer.lr_config.lr=1e-3 train.random_scaling=exponential
 #python train_jax.py logging.wandb_project=log1 logging.wandb_name=oomd_exp optimizer=oomd optimizer.lr_config.lr=1e-4 train.random_scaling=exponential

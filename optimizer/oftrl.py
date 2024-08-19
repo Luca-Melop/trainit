@@ -3,7 +3,7 @@ from jax import tree_util as jtu
 from jax import jax
 import chex
 import optax
-from typing import NamedTuple
+from typing import NamedTuple, Union
 from optimizer.online_learners import OnlineLearner, OnlineLearnerExtraArgs
 import logstate
 import utils
@@ -90,8 +90,7 @@ def oftrl( #with cheating hint (no adaptive)
     beta_2: float = 0.999,
     beta_3: float =0.9,
     epsilon: float = 1e-8,
-    hint_method: int = 3,
-    cheating: bool = False,
+    hint_method: Union[int, str] = 3,
 ) -> OnlineLearnerExtraArgs:
 
     class LogChecker(object):
@@ -148,7 +147,8 @@ def oftrl( #with cheating hint (no adaptive)
         #method between 1 and 15
         #if not cheating:
         #TODO: add check if not cheating, otherwise you need to comment out hint = ... if cheating is True
-        #hint = update_hint(hint_method, previous_hint, updates, count_inc, state.prev_params, beta_3)
+        if isinstance(hint_method, int):
+            hint = update_hint(hint_method, previous_hint, updates, count_inc, state.prev_params, beta_3)
           
         
         new_weighted_sum = jtu.tree_map(lambda ws, u: beta_1 * ws + (1-beta_1) * u, state.weighted_sum, updates)

@@ -23,11 +23,11 @@ https://wandb.ai/optimizedlearning/log1/reports/Benchmark-Adam-discounted-FTRL--
 ```bash
 python train_jax.py logging.wandb_project=<project-name> logging.wandb_name=<name> optimizer=oftrl optimizer.beta3=0.5  optimizer.hint_method=0 #hint method between 0 and 20 (see optimizer/oftrl.py), beta3 is used for the hint calculations
 ```
-If you use cheating, hint_method has to be "cheating" (i.e. don't specify any hint method, otherwise it will overwrite the actual cheating hint)
+If you use cheating, hint_method has to be a string, e.g., "cheating" (i.e. don't specify any hint method, otherwise it will overwrite the actual cheating hint)
 https://wandb.ai/optimizedlearning/log1/reports/Cheating-vs-Hints--Vmlldzo5MDUzODYx
 ## Cheating POC (with two batches per iteration (2x gradient evaluations))
 ```bash
-python train_jax.py logging.wandb_project=<project-name> logging.wandb_name=cheat_oftrl optimizer=oftrl train.use_cheat_hi
+python train_jax.py logging.wandb_project=<project-name> logging.wandb_name=cheat_oftrl optimizer=oftrl train.use_cheat_hint=True
 ```  
 https://wandb.ai/optimizedlearning/log1/reports/Cheating-OFTRL-POC-Adam--Vmlldzo5MDU1NzAz
 ## Gradient Accumulation 8 Batches

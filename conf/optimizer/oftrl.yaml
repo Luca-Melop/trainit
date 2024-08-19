@@ -8,4 +8,3 @@ beta1: 0.9
 beta2: 0.999
 beta3: 0.9
 hint_method: 3
-use_cheat_hints: True
