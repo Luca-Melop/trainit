@@ -52,8 +52,8 @@ from optimizer.oftrl import oftrl, adaptive_oftrl
 from optimizer.exponentiated_gradient import exponentiated_gradient
 
 
-sys.path.append('./minGPT')
-from mingpt.model import GPT as torch_GPT
+#sys.path.append('./minGPT')
+#from mingpt.model import GPT as torch_GPT
 
 import random
 import numpy as np

@@ -15,7 +15,7 @@ This repo extends https://github.com/ZQZCalin/trainit. Instructions are availabl
 python train_jax.py logging.wandb_project=<project-name> logging.wandb_name=<name> optimizer=ftrl
 ```   
 ```bash
-python train_jax.py logging.wandb_project=<project-name> logging.wandb_name=<name> #set weight decay to 0 for a fair comparison
+python train_jax.py logging.wandb_project=<project-name> logging.wandb_name=<name> #set weight decay to 0.0 for a fair comparison
 ```   
 
 https://wandb.ai/optimizedlearning/log1/reports/Benchmark-Adam-discounted-FTRL--Vmlldzo5MDU1NjUw
