@@ -1,6 +1,8 @@
 # LLM Training Pipeline
 
-This repo extends https://github.com/ZQZCalin/trainit. Instructions are available there.
+This repo extends https://github.com/ZQZCalin/trainit. Instructions are available there.   
+
+Project Report: https://lucamezger.com/RSI_2024_Paper.pdf
 
 # New Functionality
 - implementation of more optimizers
